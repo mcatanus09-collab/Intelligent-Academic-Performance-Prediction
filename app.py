@@ -1,5 +1,4 @@
-
-    # Evaluate model
+  # Evaluate model
     predictions = model.predict(X_test)
 
     metrics = {
