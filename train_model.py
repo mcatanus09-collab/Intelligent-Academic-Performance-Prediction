@@ -1,98 +1,241 @@
-"""Train a student exam-score prediction model using synthetic demo data."""
-from pathlib import Path
-import json
 
+import os
+import json
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.impute import SimpleImputer
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+from pathlib import Path
+
 from sklearn.model_selection import train_test_split
+from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import (
+    mean_absolute_error,
+    mean_squared_error,
+    r2_score
+)
 
-ROOT = Path(__file__).resolve().parent
-MODEL_DIR = ROOT / "models"
+# ==========================================
+# 1. FILE PATHS
+# ==========================================
+
+BASE_DIR = Path(__file__).resolve().parent
+
+MODEL_DIR = BASE_DIR / "models"
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
 MODEL_PATH = MODEL_DIR / "student_performance_model.joblib"
-DATA_PATH = ROOT / "student_performance_sample.csv"
-METRICS_PATH = ROOT / "model_metrics.json"
+DATA_PATH = BASE_DIR / "student_data.csv"
+METRICS_PATH = BASE_DIR / "model_metrics.json"
 
-FEATURES = [
-    "hours_studied", "attendance", "previous_scores", "sleep_hours",
-    "practice_papers", "extracurricular", "parental_support",
-]
+
+# ==========================================
+# 2. INPUT FEATURES
+# ==========================================
+
 NUMERIC_FEATURES = [
-    "hours_studied", "attendance", "previous_scores", "sleep_hours",
-    "practice_papers",
+    "hours_studied",
+    "attendance",
+    "previous_scores",
+    "sleep_hours",
+    "practice_papers"
 ]
-CATEGORICAL_FEATURES = ["extracurricular", "parental_support"]
-TARGET = "exam_score"
+
+CATEGORICAL_FEATURES = [
+    "extracurricular",
+    "parental_support"
+]
+
+FEATURES = NUMERIC_FEATURES + CATEGORICAL_FEATURES
+
+TARGET = "predicted_exam_score"
 
 
-def create_sample_dataset(n_samples=1200, random_state=42):
-    """Create reproducible synthetic data for demonstration only."""
-    rng = np.random.default_rng(random_state)
-    hours = rng.uniform(0, 10, n_samples)
-    attendance = rng.uniform(50, 100, n_samples)
-    previous = rng.uniform(35, 100, n_samples)
-    sleep = rng.uniform(4, 10, n_samples)
-    papers = rng.integers(0, 11, n_samples)
-    extracurricular = rng.choice(["Yes", "No"], n_samples, p=[0.45, 0.55])
-    support = rng.choice(["Low", "Medium", "High"], n_samples, p=[0.2, 0.5, 0.3])
+# ==========================================
+# 3. GENERATE SYNTHETIC DATASET
+# ==========================================
 
-    support_effect = pd.Series(support).map(
-        {"Low": -2.0, "Medium": 0.0, "High": 3.0}
-    ).to_numpy()
-    extra_effect = np.where(extracurricular == "Yes", 1.0, 0.0)
+def load_dataset():
 
-    score = (
-        18 + 2.0 * hours + 0.22 * attendance + 0.28 * previous
-        + 1.25 * papers - 0.9 * np.abs(sleep - 8)
-        + support_effect + extra_effect + rng.normal(0, 5, n_samples)
-    )
-    score = np.clip(score, 0, 100)
+    np.random.seed(42)
 
-    return pd.DataFrame({
-        "hours_studied": hours.round(1),
-        "attendance": attendance.round(1),
-        "previous_scores": previous.round(1),
-        "sleep_hours": sleep.round(1),
-        "practice_papers": papers,
-        "extracurricular": extracurricular,
-        "parental_support": support,
-        "exam_score": score.round(1),
+    number_of_students = 1500
+
+    data = pd.DataFrame({
+
+        "hours_studied": np.random.uniform(
+            1, 10, number_of_students
+        ),
+
+        "attendance": np.random.uniform(
+            50, 100, number_of_students
+        ),
+
+        "previous_scores": np.random.uniform(
+            30, 100, number_of_students
+        ),
+
+        "sleep_hours": np.random.uniform(
+            4, 10, number_of_students
+        ),
+
+        "practice_papers": np.random.randint(
+            0, 11, number_of_students
+        ),
+
+        "extracurricular": np.random.choice(
+            ["Yes", "No"],
+            number_of_students
+        ),
+
+        "parental_support": np.random.choice(
+            ["Low", "Medium", "High"],
+            number_of_students
+        )
+
     })
 
-
-def train_and_save():
-    """Train, evaluate, save the model/data/metrics, and return them."""
-    df = create_sample_dataset()
-    X = df[FEATURES]
-    y = df[TARGET]
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
+    # Generate synthetic exam scores
+    score = (
+        data["hours_studied"] * 3.0
+        + data["attendance"] * 0.20
+        + data["previous_scores"] * 0.25
+        + data["sleep_hours"] * 1.5
+        + data["practice_papers"] * 1.5
+        + data["extracurricular"].map({
+            "Yes": 2,
+            "No": 0
+        })
+        + data["parental_support"].map({
+            "Low": 0,
+            "Medium": 3,
+            "High": 6
+        })
+        + np.random.normal(0, 5, number_of_students)
     )
 
-    numeric_pipeline = Pipeline([
+    data[TARGET] = np.clip(score, 0, 100)
+
+    # Save generated dataset
+    data.to_csv(DATA_PATH, index=False)
+
+    return data
+
+
+# ==========================================
+# 4. TRAIN MACHINE LEARNING MODEL
+# ==========================================
+
+def train_and_save():
+
+    print("Loading student dataset...")
+
+    data = load_dataset()
+
+    X = data[FEATURES]
+    y = data[TARGET]
+
+    # Split dataset: 80% training, 20% testing
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.20,
+        random_state=42
+    )
+
+    # Numerical preprocessing
+    numeric_transformer = Pipeline(steps=[
         ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler()),
+        ("scaler", StandardScaler())
     ])
-    categorical_pipeline = Pipeline([
+
+    # Categorical preprocessing
+    categorical_transformer = Pipeline(steps=[
         ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("onehot", OneHotEncoder(handle_unknown="ignore")),
+        ("encoder", OneHotEncoder(handle_unknown="ignore"))
     ])
-    preprocessor = ColumnTransformer([
-        ("numeric", numeric_pipeline, NUMERIC_FEATURES),
-        ("categorical", categorical_pipeline, CATEGORICAL_FEATURES),
-    ])
-    model = Pipeline([
-        ("preprocess", preprocessor),
+
+    # Combine preprocessing
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("numeric", numeric_transformer, NUMERIC_FEATURES),
+            ("categorical", categorical_transformer,
+             CATEGORICAL_FEATURES)
+        ]
+    )
+
+    # Random Forest Regressor
+    model = Pipeline(steps=[
+        ("preprocessor", preprocessor),
         ("regressor", RandomForestRegressor(
-            n_estimators=250, random_state=42, min_samples_leaf=2, n_jobs=-1
-        )),
+            n_estimators=100,
+            random_state=42,
+            max_depth=12,
+            min_samples_split=4,
+            min_samples_leaf=2,
+            n_jobs=-1
+        ))
     ])
 
+    print("Training model...")
+
+    model.fit(X_train, y_train)
+
+    # ==========================================
+    # 5. MODEL EVALUATION
+    # ==========================================
+
+    predictions = model.predict(X_test)
+
+    accuracy_metrics = {
+        "mae": round(
+            float(mean_absolute_error(y_test, predictions)), 2
+        ),
+
+        "rmse": round(
+            float(np.sqrt(mean_squared_error(y_test, predictions))), 2
+        ),
+
+        "r2_score": round(
+            float(r2_score(y_test, predictions)), 4
+        )
+    }
+
+    # ==========================================
+    # 6. SAVE TRAINED MODEL
+    # ==========================================
+
+    joblib.dump(model, MODEL_PATH)
+
+    with open(METRICS_PATH, "w") as file:
+        json.dump(accuracy_metrics, file, indent=4)
+
+    print("\n================================")
+    print("MODEL TRAINING COMPLETED")
+    print("================================")
+
+    print(f"MAE: {accuracy_metrics['mae']}")
+    print(f"RMSE: {accuracy_metrics['rmse']}")
+    print(f"R2 Score: {accuracy_metrics['r2_score']}")
+
+    print(f"\nModel saved at: {MODEL_PATH}")
+    print(f"Dataset saved at: {DATA_PATH}")
+    print(f"Metrics saved at: {METRICS_PATH}")
+
+    # Return both values for the application
+    return model, accuracy_metrics
 
 
+# ==========================================
+# 7. RUN TRAINING
+# ==========================================
+
+if __name__ == "__main__":
+    train_and_save()
+
+
+    
