@@ -1,4 +1,3 @@
-
 """Train a Student Performance Prediction Model using synthetic data."""
 
 from pathlib import Path
