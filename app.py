@@ -1,5 +1,4 @@
   # Evaluate model
-    predictions = model.predict(X_test)
 
     metrics = {
         "mae": round(float(mean_absolute_error(y_test, predictions)), 2),
